@@ -6,6 +6,7 @@ const views = require('./views');
 const { parseQuickAdd } = require('./parser');
 const { sendMail } = require('./mailer');
 const reminders = require('./reminders');
+const { ensureDemo } = require('./demo');
 
 const app = express();
 app.disable('x-powered-by');
@@ -48,6 +49,13 @@ app.get('/', (req, res) => {
   const m = currentMember(req);
   if (m) return res.redirect('/app');
   res.send(views.landing());
+});
+
+app.get('/demo', (req, res) => {
+  const p = ensureDemo(db);
+  let viewer = db.prepare("SELECT * FROM members WHERE profile_id = ? AND role = 'family' ORDER BY id LIMIT 1").get(p.id);
+  setSession(res, viewer.id);
+  res.redirect('/app');
 });
 
 app.post('/profiles', (req, res) => {

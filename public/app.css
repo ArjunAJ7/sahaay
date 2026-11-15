@@ -31,3 +31,5 @@ footer { color:#555; font-size:15px; padding:20px 0 40px; }
 body.simple { font-size:24px; }
 body.simple .btn-taken { padding:26px 54px; font-size:30px; }
 body.simple h1 { font-size:36px; } body.simple nav a { font-size:22px; }
+.demo-link { text-align:center; margin-top:10px; }
+.btn-demo { display:inline-block; padding:14px 26px; font-size:20px; font-weight:bold; color:#fff; background:#1f4a7a; border-radius:10px; text-decoration:none; }
