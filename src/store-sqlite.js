@@ -62,7 +62,13 @@ const store = {
   async markReminderSent(id) { db.prepare('UPDATE dose_log SET reminder_sent = 1 WHERE id = ?').run(id); },
   async markMissedSent(id) { db.prepare(`UPDATE dose_log SET missed_sent = 1, status = 'missed' WHERE id = ? AND status = 'pending'`).run(id); },
   async markDoseTakenIfPending(id, byName) {
-    db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime'), taken_by=? WHERE id=? AND status != 'taken'`).run(byName, id);
+    const info = db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime'), taken_by=? WHERE id=? AND status != 'taken'`).run(byName, id);
+    return info.changes;
+  },
+  async insertTakenDoseAgo(medicationId, dateStr, time, byName, hoursAgo) {
+    db.prepare(`INSERT INTO dose_log (medication_id, scheduled_date, scheduled_time, status, taken_at, taken_by)
+                VALUES (?,?,?,'taken', datetime('now','localtime', ?), ?)`)
+      .run(medicationId, dateStr, time, `-${hoursAgo} hours`, byName);
   },
   async addAppointment(a) {
     db.prepare('INSERT INTO appointments (profile_id, title, doctor, location, appt_at, notes) VALUES (?,?,?,?,?,?)')

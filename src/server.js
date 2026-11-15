@@ -1,6 +1,5 @@
 const express = require('express');
-const crypto = require('crypto');
-const db = require('./db');
+const store = require('./store');
 const { hashPasscode, newSalt, verifyPasscode, profileCode, token, todayStr, validEmail, validHHMM, esc } = require('./util');
 const views = require('./views');
 const { parseQuickAdd } = require('./parser');
@@ -21,143 +20,142 @@ app.use((req, res, next) => {
   next();
 });
 
+// Async handler wrapper: forwards rejections to the error handler instead of hanging.
+const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 function logActivity(profileId, actor, action) {
-  db.prepare('INSERT INTO activity (profile_id, actor, action) VALUES (?,?,?)').run(profileId, actor, action);
+  return store.addActivity(profileId, actor, action);
 }
 
-function currentMember(req) {
+async function currentMember(req) {
   const t = (req.headers.cookie || '').match(/sahaay=([a-f0-9]{48})/);
   if (!t) return null;
-  const row = db.prepare(
-    `SELECT m.*, p.elder_name, p.code, p.id AS pid FROM sessions s
-     JOIN members m ON m.id = s.member_id JOIN profiles p ON p.id = m.profile_id
-     WHERE s.token = ?`).get(t[1]);
-  return row || null;
+  return (await store.getSessionMember(t[1])) || null;
 }
-function requireMember(req, res) {
-  const m = currentMember(req);
+async function requireMember(req, res) {
+  const m = await currentMember(req);
   if (!m) { res.redirect('/'); return null; }
   return m;
 }
-function setSession(res, memberId) {
+async function setSession(res, memberId) {
   const t = token();
-  db.prepare('INSERT INTO sessions (token, member_id) VALUES (?,?)').run(t, memberId);
+  await store.createSession(t, memberId);
   res.set('Set-Cookie', `sahaay=${t}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`);
 }
 
-app.get('/', (req, res) => {
-  const m = currentMember(req);
+app.get('/', h(async (req, res) => {
+  const m = await currentMember(req);
   if (m) return res.redirect('/app');
   res.send(views.landing());
-});
+}));
 
-app.get('/demo', (req, res) => {
-  const p = ensureDemo(db);
-  let viewer = db.prepare("SELECT * FROM members WHERE profile_id = ? AND role = 'family' ORDER BY id LIMIT 1").get(p.id);
-  setSession(res, viewer.id);
+app.get('/demo', h(async (req, res) => {
+  const p = await ensureDemo(store);
+  const viewer = await store.firstFamilyMember(p.id);
+  await setSession(res, viewer.id);
   res.redirect('/app');
-});
+}));
 
-app.post('/profiles', (req, res) => {
+app.post('/profiles', h(async (req, res) => {
   const { elder_name, name, role, email, passcode } = req.body;
   if (!elder_name?.trim() || !name?.trim() || !validEmail(email) || !/^\d{4,8}$/.test(passcode || '')) {
     return res.status(400).send(views.landing('Please fill every field correctly (passcode: 4-8 digits).'));
   }
   const salt = newSalt();
   const code = profileCode();
-  const info = db.prepare('INSERT INTO profiles (code, elder_name, passcode_hash, salt) VALUES (?,?,?,?)')
-    .run(code, elder_name.trim(), hashPasscode(passcode, salt), salt);
-  const mid = db.prepare('INSERT INTO members (profile_id, name, role, email) VALUES (?,?,?,?)')
-    .run(info.lastInsertRowid, name.trim(), ['elder', 'caretaker', 'family'].includes(role) ? role : 'family', email.trim()).lastInsertRowid;
-  logActivity(info.lastInsertRowid, name.trim(), 'created this care profile');
-  setSession(res, mid);
+  const p = await store.createProfile({ code, elder_name: elder_name.trim(), passcode_hash: hashPasscode(passcode, salt), salt });
+  const member = await store.addMember({
+    profile_id: p.id, name: name.trim(),
+    role: ['elder', 'caretaker', 'family'].includes(role) ? role : 'family', email: email.trim(),
+  });
+  await logActivity(p.id, name.trim(), 'created this care profile');
+  await setSession(res, member.id);
   res.redirect('/app');
-});
+}));
 
-app.post('/join', (req, res) => {
+app.post('/join', h(async (req, res) => {
   const { code, passcode, name, role, email } = req.body;
-  const p = db.prepare('SELECT * FROM profiles WHERE code = ?').get((code || '').trim().toUpperCase());
+  const p = await store.getProfileByCode((code || '').trim().toUpperCase());
   if (!p || !verifyPasscode(passcode || '', p.salt, p.passcode_hash) || !name?.trim() || !validEmail(email)) {
     return res.status(403).send(views.landing('Profile code, passcode or details did not match. Please check and try again.'));
   }
-  const mid = db.prepare('INSERT INTO members (profile_id, name, role, email) VALUES (?,?,?,?)')
-    .run(p.id, name.trim(), ['elder', 'caretaker', 'family'].includes(role) ? role : 'family', email.trim()).lastInsertRowid;
-  logActivity(p.id, name.trim(), 'joined the care profile');
-  setSession(res, mid);
+  const member = await store.addMember({
+    profile_id: p.id, name: name.trim(),
+    role: ['elder', 'caretaker', 'family'].includes(role) ? role : 'family', email: email.trim(),
+  });
+  await logActivity(p.id, name.trim(), 'joined the care profile');
+  await setSession(res, member.id);
   res.redirect('/app');
-});
+}));
 
-app.get('/logout', (req, res) => {
+app.get('/logout', h(async (req, res) => {
   const t = (req.headers.cookie || '').match(/sahaay=([a-f0-9]{48})/);
-  if (t) db.prepare('DELETE FROM sessions WHERE token = ?').run(t[1]);
+  if (t) await store.deleteSession(t[1]);
   res.set('Set-Cookie', 'sahaay=; HttpOnly; Path=/; Max-Age=0');
   res.redirect('/');
-});
+}));
 
-app.get('/app', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  reminders.dueRowsForToday(db);
+app.get('/app', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  await reminders.dueRowsForToday(store);
   const today = todayStr();
-  const doses = db.prepare(
-    `SELECT d.*, mt.name AS med_name, mt.dosage, mt.instructions FROM dose_log d
-     JOIN medications mt ON mt.id = d.medication_id
-     WHERE mt.profile_id = ? AND d.scheduled_date = ? ORDER BY d.scheduled_time`).all(m.pid, today);
-  const appts = db.prepare(
-    `SELECT * FROM appointments WHERE profile_id = ? AND appt_at >= datetime('now','localtime','-1 hour')
-     ORDER BY appt_at LIMIT 5`).all(m.pid);
-  const wk = db.prepare(
-    `SELECT COUNT(*) AS total, SUM(CASE WHEN status='taken' THEN 1 ELSE 0 END) AS taken
-     FROM dose_log d JOIN medications mt ON mt.id = d.medication_id
-     WHERE mt.profile_id = ? AND d.scheduled_date >= date('now','localtime','-6 days')`).get(m.pid);
-  const activity = db.prepare('SELECT * FROM activity WHERE profile_id = ? ORDER BY id DESC LIMIT 8').all(m.pid);
+  const [doses, appts, wk, activity] = await Promise.all([
+    store.dosesForProfileDate(m.pid, today),
+    store.upcomingAppointments(m.pid),
+    store.adherenceWeek(m.pid),
+    store.listActivity(m.pid, 8),
+  ]);
   const simple = m.role === 'elder' || req.query.simple === '1';
   res.send(views.dashboard({
     profile: { elder_name: m.elder_name, code: m.code }, member: m, doses, appts,
-    adherence: { taken: wk.taken || 0, total: wk.total || 0 }, activity, simple,
+    adherence: wk, activity, simple,
   }));
-});
+}));
 
-app.post('/app/doses/:id/taken', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const d = db.prepare(`SELECT d.*, mt.profile_id, mt.name AS med_name FROM dose_log d JOIN medications mt ON mt.id = d.medication_id WHERE d.id = ?`).get(req.params.id);
+app.post('/app/doses/:id/taken', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const d = await store.getDose(req.params.id);
   if (d && d.profile_id === m.pid && d.status !== 'taken') {
     // Atomic guard: only the first mark wins, even on double-submit races.
-    const r = db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime'), taken_by=? WHERE id=? AND status != 'taken'`).run(m.name, d.id);
-    if (r.changes > 0) logActivity(m.pid, m.name, `marked ${d.med_name} (${d.scheduled_time}) as taken`);
+    const changed = await store.markDoseTakenIfPending(d.id, m.name);
+    if (changed > 0) await logActivity(m.pid, m.name, `marked ${d.med_name} (${d.scheduled_time}) as taken`);
   }
   res.redirect('/app');
-});
+}));
 
-app.get('/app/meds', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const meds = db.prepare('SELECT * FROM medications WHERE profile_id = ? ORDER BY active DESC, name').all(m.pid);
+app.get('/app/meds', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const meds = await store.listMedications(m.pid);
   res.send(views.medsPage({ profile: { elder_name: m.elder_name }, member: m, meds }));
-});
+}));
 
-app.post('/app/meds/parse', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const meds = db.prepare('SELECT * FROM medications WHERE profile_id = ? ORDER BY active DESC, name').all(m.pid);
+app.post('/app/meds/parse', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const meds = await store.listMedications(m.pid);
   res.send(views.medsPage({ profile: { elder_name: m.elder_name }, member: m, meds, parsed: parseQuickAdd(req.body.quick), quick: req.body.quick }));
-});
+}));
 
-app.post('/app/meds', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
+app.post('/app/meds', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
   const b = req.body;
   const times = [b.time1, b.time2, b.time3, b.time4].filter(Boolean);
-  const meds = db.prepare('SELECT * FROM medications WHERE profile_id = ? ORDER BY active DESC, name').all(m.pid);
+  const meds = await store.listMedications(m.pid);
   if (b.confirmed !== '1' || !b.name?.trim() || !times.length || !times.every(validHHMM) || !/^\d{4}-\d{2}-\d{2}$/.test(b.start_date || '')) {
     return res.status(400).send(views.medsPage({ profile: { elder_name: m.elder_name }, member: m, meds, err: 'Please confirm every required field, including exact times.' }));
   }
-  db.prepare('INSERT INTO medications (profile_id, name, dosage, instructions, times, start_date, end_date, created_by) VALUES (?,?,?,?,?,?,?,?)')
-    .run(m.pid, b.name.trim(), (b.dosage || '').trim(), (b.instructions || '').trim(), JSON.stringify(times), b.start_date, b.end_date || null, m.name);
-  logActivity(m.pid, m.name, `added medicine ${b.name.trim()} (${times.join(', ')})`);
+  await store.addMedication({
+    profile_id: m.pid, name: b.name.trim(), dosage: (b.dosage || '').trim(),
+    instructions: (b.instructions || '').trim(), times, start_date: b.start_date,
+    end_date: b.end_date || null, created_by: m.name,
+  });
+  await logActivity(m.pid, m.name, `added medicine ${b.name.trim()} (${times.join(', ')})`);
   res.redirect('/app/meds');
-});
+}));
 
-app.get('/app/meds/:id/archive', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const med = db.prepare('SELECT * FROM medications WHERE id = ? AND profile_id = ?').get(req.params.id, m.pid);
-  if (!med) return res.redirect('/app/meds');
+app.get('/app/meds/:id/archive', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const med = await store.getMedication(req.params.id);
+  if (!med || med.profile_id !== m.pid) return res.redirect('/app/meds');
   res.send(views.layout('Archive schedule', `
 <h1>Archive this schedule?</h1>
 <div class="card">
@@ -167,19 +165,22 @@ app.get('/app/meds/:id/archive', (req, res) => {
 <form method="post" action="/app/meds/${med.id}/archive" class="inline"><button class="btn-danger">Yes, archive this schedule</button></form>
 <a class="btn-ghost" href="/app/meds">No, keep it</a>
 </div>`, { member: m }));
-});
+}));
 
-app.post('/app/meds/:id/archive', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const med = db.prepare('SELECT * FROM medications WHERE id = ? AND profile_id = ?').get(req.params.id, m.pid);
-  if (med) { db.prepare('UPDATE medications SET active = 0 WHERE id = ?').run(med.id); logActivity(m.pid, m.name, `archived the schedule for ${med.name}`); }
+app.post('/app/meds/:id/archive', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const med = await store.getMedication(req.params.id);
+  if (med && med.profile_id === m.pid) {
+    await store.stopMedication(med.id);
+    await logActivity(m.pid, m.name, `archived the schedule for ${med.name}`);
+  }
   res.redirect('/app/meds');
-});
+}));
 
-app.get('/app/appointments', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const appts = db.prepare('SELECT * FROM appointments WHERE profile_id = ? ORDER BY appt_at DESC LIMIT 30').all(m.pid);
-  const rows = appts.map(a => `<li><strong>${esc(a.appt_at.replace('T', ' '))}</strong> - ${esc(a.title)}${a.doctor ? ' (' + esc(a.doctor) + ')' : ''}${a.location ? ', ' + esc(a.location) : ''}${a.notes ? `<br><span class="hint">${esc(a.notes)}</span>` : ''}</li>`).join('');
+app.get('/app/appointments', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const appts = await store.listAppointments(m.pid, 30);
+  const rows = appts.map(a => `<li><strong>${esc(String(a.appt_at).replace('T', ' '))}</strong> - ${esc(a.title)}${a.doctor ? ' (' + esc(a.doctor) + ')' : ''}${a.location ? ', ' + esc(a.location) : ''}${a.notes ? `<br><span class="hint">${esc(a.notes)}</span>` : ''}</li>`).join('');
   res.send(views.layout('Appointments', `
 <h1>Appointments for ${esc(m.elder_name)}</h1>
 <ul class="appts">${rows || '<li>None yet.</li>'}</ul>
@@ -192,37 +193,45 @@ app.get('/app/appointments', (req, res) => {
   <label>Notes (optional) <input name="notes"></label>
   <button type="submit">Save appointment</button>
 </form></section>`, { member: m }));
-});
+}));
 
-app.post('/app/appointments', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
+app.post('/app/appointments', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
   const { title, doctor, location, appt_at, notes } = req.body;
   if (title?.trim() && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(appt_at || '')) {
-    db.prepare('INSERT INTO appointments (profile_id, title, doctor, location, appt_at, notes) VALUES (?,?,?,?,?,?)')
-      .run(m.pid, title.trim(), (doctor || '').trim(), (location || '').trim(), appt_at, (notes || '').trim());
-    logActivity(m.pid, m.name, `added appointment ${title.trim()} at ${appt_at.replace('T', ' ')}`);
+    await store.addAppointment({
+      profile_id: m.pid, title: title.trim(), doctor: (doctor || '').trim(),
+      location: (location || '').trim(), appt_at, notes: (notes || '').trim(),
+    });
+    await logActivity(m.pid, m.name, `added appointment ${title.trim()} at ${appt_at.replace('T', ' ')}`);
   }
   res.redirect('/app/appointments');
-});
+}));
 
-app.get('/app/members', (req, res) => {
-  const m = requireMember(req, res); if (!m) return;
-  const members = db.prepare('SELECT name, role, email, created_at FROM members WHERE profile_id = ? ORDER BY id').all(m.pid);
+app.get('/app/members', h(async (req, res) => {
+  const m = await requireMember(req, res); if (!m) return;
+  const members = await store.listMembers(m.pid);
   const rows = members.map(x => `<li><strong>${esc(x.name)}</strong> (${esc(x.role)}) - ${esc(x.email)}</li>`).join('');
   res.send(views.layout('Family & caretakers', `
 <h1>Family & caretakers</h1>
 <p class="lede">Everyone below can view and manage ${esc(m.elder_name)}'s care profile with the family passcode. Profile code: <strong class="code">${esc(m.code)}</strong></p>
 <ul>${rows}</ul>
 <p class="hint">To add someone, have them open Sahaay and choose "Join a care profile" with the profile code and passcode.</p>`, { member: m }));
-});
+}));
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+// Error handler: never leak internals.
+app.use((err, req, res, next) => {
+  console.error('[sahaay]', err.message);
+  res.status(500).send(views.layout('Something went wrong', '<h1>Something went wrong</h1><p>Please try again in a moment.</p>', {}));
+});
 
 const PORT = process.env.PORT || 8080;
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Sahaay listening on :${PORT}`);
-    reminders.start(db, sendMail);
+    reminders.start(store, sendMail);
   });
 }
 module.exports = { app };

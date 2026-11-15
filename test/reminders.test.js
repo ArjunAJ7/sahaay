@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 process.env.DB_PATH = ':memory:';
 const db = require('../src/db');
+const store = require('../src/store-sqlite');
 const reminders = require('../src/reminders');
 
 function seed() {
@@ -25,18 +26,18 @@ test('upcoming dose emails everyone once, missed escalates to carers once', asyn
   const sent = [];
   const fakeSend = async (m) => { sent.push(m); return { sent: true }; };
 
-  await reminders.tick(db, fakeSend, today);
+  await reminders.tick(store, fakeSend, today);
   assert.strictEqual(sent.length, 1, 'one upcoming reminder');
   assert.deepStrictEqual(sent[0].to.sort(), ['carer@example.com', 'elder@example.com']);
   assert.ok(sent[0].subject.includes('TestMed'));
 
   // Second tick at same time: no duplicate
-  await reminders.tick(db, fakeSend, today);
+  await reminders.tick(store, fakeSend, today);
   assert.strictEqual(sent.length, 1, 'no duplicate upcoming reminder');
 
   // 31 minutes later: missed escalation to caretakers/family only, marked missed
   const later = new Date(today.getTime() + 31 * 60000);
-  await reminders.tick(db, fakeSend, later);
+  await reminders.tick(store, fakeSend, later);
   assert.strictEqual(sent.length, 2, 'one missed escalation');
   assert.deepStrictEqual(sent[1].to, ['carer@example.com']);
   assert.ok(sent[1].subject.includes('MISSED'));
@@ -45,7 +46,7 @@ test('upcoming dose emails everyone once, missed escalates to carers once', asyn
   assert.strictEqual(row.missed_sent, 1);
 
   // And no further escalation
-  await reminders.tick(db, fakeSend, new Date(today.getTime() + 62 * 60000));
+  await reminders.tick(store, fakeSend, new Date(today.getTime() + 62 * 60000));
   assert.strictEqual(sent.length, 2, 'no duplicate missed escalation');
 });
 
@@ -56,9 +57,9 @@ test('taken dose never escalates', async () => {
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const mid = db.prepare('INSERT INTO medications (profile_id, name, times, start_date) VALUES (?,?,?,?)')
     .run(pid, 'TakenMed', JSON.stringify([hhmm]), dateStr).lastInsertRowid;
-  reminders.dueRowsForToday(db, now);
+  await reminders.dueRowsForToday(store, now);
   db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime') WHERE medication_id=?`).run(mid);
   const sent = [];
-  await reminders.tick(db, () => { sent.push(1); return { sent: true }; }, new Date(now.getTime() + 45 * 60000));
+  await reminders.tick(store, () => { sent.push(1); return { sent: true }; }, new Date(now.getTime() + 45 * 60000));
   assert.strictEqual(sent.length, 0, 'no emails for taken dose');
 });

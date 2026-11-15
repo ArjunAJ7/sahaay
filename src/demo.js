@@ -2,30 +2,32 @@
 // explore Sahaay without creating anything. Fictional person, no real data.
 const { hashPasscode, newSalt, todayStr } = require('./util');
 
-function ensureDemo(db) {
-  let p = db.prepare('SELECT * FROM profiles WHERE code = ?').get('DEMO26');
+async function ensureDemo(store) {
+  let p = await store.getProfileByCode('DEMO26');
   if (p) return p;
   const salt = newSalt();
-  const pid = db.prepare('INSERT INTO profiles (code, elder_name, passcode_hash, salt, notes) VALUES (?,?,?,?,?)')
-    .run('DEMO26', 'Demo Amma (fictional)', hashPasscode('1234', salt), salt,
-      'Synthetic demo profile. All people, medicines and appointments here are fictional.').lastInsertRowid;
-  db.prepare('INSERT INTO members (profile_id, name, role, email) VALUES (?,?,?,?)').run(pid, 'Demo Daughter (fictional)', 'family', 'demo@example.com');
-  db.prepare('INSERT INTO members (profile_id, name, role, email) VALUES (?,?,?,?)').run(pid, 'Demo Amma (fictional)', 'elder', 'demo-elder@example.com');
+  p = await store.createProfile({
+    code: 'DEMO26', elder_name: 'Demo Amma (fictional)',
+    passcode_hash: hashPasscode('1234', salt), salt,
+    notes: 'Synthetic demo profile. All people, medicines and appointments here are fictional.',
+  });
+  const pid = p.id;
+  await store.addMember({ profile_id: pid, name: 'Demo Daughter (fictional)', role: 'family', email: 'demo@example.com' });
+  await store.addMember({ profile_id: pid, name: 'Demo Amma (fictional)', role: 'elder', email: 'demo-elder@example.com' });
   const today = todayStr();
   const mk = (name, dosage, instructions, times) =>
-    db.prepare('INSERT INTO medications (profile_id, name, dosage, instructions, times, start_date, created_by) VALUES (?,?,?,?,?,?,?)')
-      .run(pid, name, dosage, instructions, JSON.stringify(times), today, 'Demo Daughter (fictional)').lastInsertRowid;
-  const m1 = mk('Metformin', '500mg', 'after food', ['08:00', '20:00']);
-  mk('Vitamin D3', '1000 IU', '', ['09:00']);
-  mk('Amlodipine', '5mg', '', ['08:00']);
-  db.prepare(`INSERT INTO dose_log (medication_id, scheduled_date, scheduled_time, status, taken_at, taken_by)
-              VALUES (?,?,?,'taken', datetime('now','localtime','-3 hours'), 'Demo Amma (fictional)')`)
-    .run(m1, today, '08:00');
-  db.prepare('INSERT INTO appointments (profile_id, title, doctor, location, appt_at, notes) VALUES (?,?,?,?,?,?)')
-    .run(pid, 'Cardiology check-up', 'Dr. Rao (fictional)', 'City Clinic, Kozhikode', `${today}T17:30`, 'Bring previous reports (demo).');
-  db.prepare('INSERT INTO activity (profile_id, actor, action) VALUES (?,?,?)').run(pid, 'Demo Daughter (fictional)', 'added medicine Metformin (08:00, 20:00)');
-  db.prepare('INSERT INTO activity (profile_id, actor, action) VALUES (?,?,?)').run(pid, 'Demo Amma (fictional)', 'marked Metformin (08:00) as taken');
-  return db.prepare('SELECT * FROM profiles WHERE id = ?').get(pid);
+    store.addMedication({ profile_id: pid, name, dosage, instructions, times, start_date: today, created_by: 'Demo Daughter (fictional)' });
+  const m1 = await mk('Metformin', '500mg', 'after food', ['08:00', '20:00']);
+  await mk('Vitamin D3', '1000 IU', '', ['09:00']);
+  await mk('Amlodipine', '5mg', '', ['08:00']);
+  await store.insertTakenDoseAgo(m1.id, today, '08:00', 'Demo Amma (fictional)', 3);
+  await store.addAppointment({
+    profile_id: pid, title: 'Cardiology check-up', doctor: 'Dr. Rao (fictional)',
+    location: 'City Clinic, Kozhikode', appt_at: `${today}T17:30`, notes: 'Bring previous reports (demo).',
+  });
+  await store.addActivity(pid, 'Demo Daughter (fictional)', 'added medicine Metformin (08:00, 20:00)');
+  await store.addActivity(pid, 'Demo Amma (fictional)', 'marked Metformin (08:00) as taken');
+  return store.getProfileById(pid);
 }
 
 module.exports = { ensureDemo };

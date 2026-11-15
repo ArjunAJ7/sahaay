@@ -14,6 +14,13 @@ afterwards. The best-known free *family-shared* medication app (CareZone) shut
 down in 2024, leaving families without a working shared option. Sahaay is built
 elderly-first and family-shared from the start.
 
+## Data storage and durability
+
+- Local development: embedded SQLite (`node:sqlite`) under `DATA_DIR` (default `./data`).
+- Deployment: durable hosted SQLite on Turso (libsql). Set `STORE=turso`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`; the app uses the same schema and SQL dialect, and all data survives container restarts, redeploys and cold starts. This was verified by running the full flow against the remote database, restarting the server process, and confirming state persisted.
+- The store layer (`src/store.js`) selects the backend; the rest of the app is identical in both modes.
+- `/demo` creates a clearly-labeled synthetic profile (DEMO26) for evaluation on first visit; it is convenience content, not the persistence mechanism.
+
 ## Features
 
 - **Shared care profile** - one profile per elderly person; family members and
