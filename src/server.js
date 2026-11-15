@@ -153,10 +153,25 @@ app.post('/app/meds', (req, res) => {
   res.redirect('/app/meds');
 });
 
-app.post('/app/meds/:id/stop', (req, res) => {
+app.get('/app/meds/:id/archive', (req, res) => {
   const m = requireMember(req, res); if (!m) return;
   const med = db.prepare('SELECT * FROM medications WHERE id = ? AND profile_id = ?').get(req.params.id, m.pid);
-  if (med) { db.prepare('UPDATE medications SET active = 0 WHERE id = ?').run(med.id); logActivity(m.pid, m.name, `stopped medicine ${med.name}`); }
+  if (!med) return res.redirect('/app/meds');
+  res.send(views.layout('Archive schedule', `
+<h1>Archive this schedule?</h1>
+<div class="card">
+<p><strong>${esc(med.name)}</strong> ${esc(med.dosage || '')} - ${JSON.parse(med.times).join(', ')}</p>
+<p>Archiving <strong>stops the reminders</strong> for this medicine and moves the schedule to the archived list. The full history is kept.</p>
+<p><strong>This changes nothing about the treatment itself.</strong> Medicines should only be started, changed or stopped when a doctor says so - Sahaay never makes that decision.</p>
+<form method="post" action="/app/meds/${med.id}/archive" class="inline"><button class="btn-danger">Yes, archive this schedule</button></form>
+<a class="btn-ghost" href="/app/meds">No, keep it</a>
+</div>`, { member: m }));
+});
+
+app.post('/app/meds/:id/archive', (req, res) => {
+  const m = requireMember(req, res); if (!m) return;
+  const med = db.prepare('SELECT * FROM medications WHERE id = ? AND profile_id = ?').get(req.params.id, m.pid);
+  if (med) { db.prepare('UPDATE medications SET active = 0 WHERE id = ?').run(med.id); logActivity(m.pid, m.name, `archived the schedule for ${med.name}`); }
   res.redirect('/app/meds');
 });
 

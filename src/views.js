@@ -69,8 +69,8 @@ function doseRow(d, simple) {
     <span class="dose-name">${esc(d.med_name)}${d.dosage ? ' ' + esc(d.dosage) : ''}</span>
     ${d.instructions ? `<span class="hint">${esc(d.instructions)}</span>` : ''}</div>
     ${taken ? `<span class="ok">Taken${d.taken_by ? ' by ' + esc(d.taken_by) : ''}</span>`
-      : missed ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-late">Mark taken (late)</button></form><span class="bad">Missed - family notified</span>`
-      : simple || true ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-taken">Taken</button></form>` : ''}
+      : missed ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-late">Mark as taken (late)</button></form><span class="bad">Missed - family notified</span>`
+      : simple || true ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-taken">Mark dose as taken</button></form>` : ''}
   </li>`;
 }
 
@@ -98,7 +98,7 @@ function medsPage({ profile, member, meds, parsed, quick, err }) {
   const rows = meds.map(m => `<li class="${m.active ? '' : 'inactive'}">
     <strong>${esc(m.name)}</strong> ${esc(m.dosage || '')} - ${JSON.parse(m.times).map(esc).join(', ')}${m.instructions ? ' - ' + esc(m.instructions) : ''}
     ${m.end_date ? `until ${esc(m.end_date)}` : 'ongoing'}
-    ${m.active ? `<form method="post" action="/app/meds/${m.id}/stop" class="inline"><button class="btn-small">Stop</button></form>` : '(stopped)'}
+    ${m.active ? `<a class="btn-small" href="/app/meds/${m.id}/archive">Archive</a>` : '(archived)'}
   </li>`).join('');
   let addForm;
   if (parsed) {

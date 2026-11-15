@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   passcode_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   notes TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS members (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,12 +24,12 @@ CREATE TABLE IF NOT EXISTS members (
   name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('elder','caretaker','family')),
   email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS medications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS medications (
   end_date TEXT DEFAULT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   created_by TEXT DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS dose_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,14 +66,14 @@ CREATE TABLE IF NOT EXISTS appointments (
   notes TEXT DEFAULT '',
   remind_24_sent INTEGER NOT NULL DEFAULT 0,
   remind_1h_sent INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   actor TEXT NOT NULL,
   action TEXT NOT NULL,
-  at TEXT NOT NULL DEFAULT (datetime('now'))
+  at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_dose_log_med ON dose_log(medication_id, scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_members_profile ON members(profile_id);
