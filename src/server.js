@@ -121,8 +121,9 @@ app.post('/app/doses/:id/taken', (req, res) => {
   const m = requireMember(req, res); if (!m) return;
   const d = db.prepare(`SELECT d.*, mt.profile_id, mt.name AS med_name FROM dose_log d JOIN medications mt ON mt.id = d.medication_id WHERE d.id = ?`).get(req.params.id);
   if (d && d.profile_id === m.pid && d.status !== 'taken') {
-    db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime'), taken_by=? WHERE id=?`).run(m.name, d.id);
-    logActivity(m.pid, m.name, `marked ${d.med_name} (${d.scheduled_time}) as taken`);
+    // Atomic guard: only the first mark wins, even on double-submit races.
+    const r = db.prepare(`UPDATE dose_log SET status='taken', taken_at=datetime('now','localtime'), taken_by=? WHERE id=? AND status != 'taken'`).run(m.name, d.id);
+    if (r.changes > 0) logActivity(m.pid, m.name, `marked ${d.med_name} (${d.scheduled_time}) as taken`);
   }
   res.redirect('/app');
 });
