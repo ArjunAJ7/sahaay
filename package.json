@@ -1,0 +1,15 @@
+{
+  "name": "sahaay",
+  "version": "0.1.0",
+  "description": "Sahaay - Elderly Care & Medication Management Platform. Shared, passcode-secured care profiles for elderly people, their family and caretakers: medication schedules, adherence tracking, appointments and proactive email reminders.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/parser.test.js test/reminders.test.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "license": "MIT"
+}
