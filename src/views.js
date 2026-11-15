@@ -70,7 +70,7 @@ function doseRow(d, simple) {
     ${d.instructions ? `<span class="hint">${esc(d.instructions)}</span>` : ''}</div>
     ${taken ? `<span class="ok">Taken${d.taken_by ? ' by ' + esc(d.taken_by) : ''}</span>`
       : missed ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-late">Mark as taken (late)</button></form><span class="bad">Missed - family notified</span>`
-      : simple || true ? `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-taken">Mark dose as taken</button></form>` : ''}
+      : `<form method="post" action="/app/doses/${d.id}/taken"><button class="btn-taken">Mark dose as taken</button></form>`}
   </li>`;
 }
 

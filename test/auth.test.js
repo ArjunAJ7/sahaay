@@ -128,3 +128,25 @@ test('archive page warns it never means stopping treatment', async () => {
   assert.match(page.text, /reminders/i);
   assert.match(page.text, /doctor says so|never stop|do not stop/i);
 });
+
+test('repeated failed joins are rate-limited with 429', async () => {
+  const c = client();
+  const create = await c('/profiles', { method: 'POST', body: {
+    elder_name: 'Test Elder R', name: 'Owner R', role: 'family', email: 'r@example.com', passcode: '1357',
+  } });
+  assert.equal(create.status, 302);
+  const dash = await c('/app');
+  const code = dash.text.match(/Profile code:\s*<[^>]*>\s*([A-Z0-9]{6})/)?.[1];
+  assert.ok(code);
+
+  const brute = client();
+  let limited = false;
+  for (let i = 0; i < 15 && !limited; i++) {
+    const r = await brute('/join', { method: 'POST', body: {
+      code, passcode: '0000', name: 'Brute', role: 'family', email: 'b@example.com',
+    } });
+    if (r.status === 429) limited = true;
+    else assert.equal(r.status, 403);
+  }
+  assert.ok(limited, 'join attempts eventually rate-limited');
+});

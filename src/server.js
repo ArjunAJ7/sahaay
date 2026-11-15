@@ -73,10 +73,26 @@ app.post('/profiles', h(async (req, res) => {
   res.redirect('/app');
 }));
 
+
+// Brute-force protection for passcode entry: max 10 failed join attempts per IP per 10 minutes.
+const joinFails = new Map();
+const JOIN_WINDOW_MS = 10 * 60 * 1000, JOIN_MAX_FAILS = 10;
+function joinRateCheck(ip) {
+  const now = Date.now();
+  let e = joinFails.get(ip);
+  if (!e || now > e.resetAt) { e = { fails: 0, resetAt: now + JOIN_WINDOW_MS }; joinFails.set(ip, e); }
+  return e.fails < JOIN_MAX_FAILS ? e : null;
+}
+function joinRateRecord(entry) { entry.fails += 1; }
+
 app.post('/join', h(async (req, res) => {
+  const ip = req.socket.remoteAddress || 'unknown';
+  const bucket = joinRateCheck(ip);
+  if (!bucket) return res.status(429).send(views.landing('Too many attempts. Please wait a few minutes and try again.'));
   const { code, passcode, name, role, email } = req.body;
   const p = await store.getProfileByCode((code || '').trim().toUpperCase());
   if (!p || !verifyPasscode(passcode || '', p.salt, p.passcode_hash) || !name?.trim() || !validEmail(email)) {
+    joinRateRecord(bucket);
     return res.status(403).send(views.landing('Profile code, passcode or details did not match. Please check and try again.'));
   }
   const member = await store.addMember({
